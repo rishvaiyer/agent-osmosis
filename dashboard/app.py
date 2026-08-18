@@ -11,6 +11,7 @@ A human-in-the-loop dashboard for cross-model recipe transfer:
   - check the load-bearing invariance experiment
 """
 from __future__ import annotations
+import time
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
@@ -53,15 +54,43 @@ tab_run, tab_recipe, tab_compound, tab_invar = st.tabs(
     ["⚡ Warm vs Cold", "📋 Recipe inspector", "📈 Compounding", "🔬 Invariance"])
 
 # ---------------------------------------------------------------- warm vs cold
+def _race_figure(grid, cold, warm, upto=None):
+    """Build the warm-vs-cold chart, optionally revealing only the first `upto` points
+    (used to animate the race being drawn live)."""
+    n = len(grid) if upto is None else max(2, upto)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=grid[:n], y=cold[:n], name="cold (from scratch)",
+                             line=dict(color=FAINT, width=2.5)))
+    fig.add_trace(go.Scatter(x=grid[:n], y=warm[:n], name="warm (recipe)",
+                             line=dict(color=TEAL, width=3.5)))
+    fig.add_hline(y=target_acc, line=dict(color=CORAL, dash="dash"),
+                  annotation_text=f"target {target_acc}")
+    fig.update_layout(xaxis_title="unique labeled examples seen", yaxis_title="validation accuracy",
+                      height=420, legend=dict(orientation="h", y=-0.2), margin=dict(t=20),
+                      xaxis_range=[0, max(grid)], yaxis_range=[0.4, 1.0])
+    return fig
+
 with tab_run:
     st.subheader("Does the recipe get a new model to target with less data?")
-    if st.button("Run transfer", type="primary", key="run_wvc"):
+    animate = st.checkbox("Animate the race", value=True,
+                          help="Draw the two learning curves live so you can watch warm pull ahead.")
+    if st.button("▶ Run transfer", type="primary", key="run_wvc"):
         with st.spinner("Extracting recipe from source, warm-starting target…"):
+            t0 = time.time()
             r = warm_vs_cold(task, source_base=source, target_base=target,
                              budget_frac=budget, target_acc=target_acc, trials=trials,
                              hp={"lr": 0.15, "batch": 16, "prefit_passes": 3})
+            r["elapsed"] = time.time() - t0
+            r["n_models"] = trials * 2
         st.session_state.wvc = r
         st.session_state.recipe = r["recipe"]
+        # --- animated draw: reveal the curve point by point (the "race") ---
+        if animate:
+            slot = st.empty()
+            for upto in range(2, len(r["grid"]) + 1, 3):
+                slot.plotly_chart(_race_figure(r["grid"], r["cold_curve"], r["warm_curve"], upto),
+                                  use_container_width=True, key=f"anim{upto}")
+                time.sleep(0.03)
 
     r = st.session_state.get("wvc")
     if r:
@@ -71,19 +100,25 @@ with tab_run:
         c3.metric("Speedup", f"{r['speedup']:.2f}×")
         c4.metric("Transfer confidence", f"{r['recipe'].transfer_confidence():.0f}/100")
 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=r["grid"], y=r["cold_curve"], name="cold (from scratch)",
-                                 line=dict(color=FAINT, width=2.5)))
-        fig.add_trace(go.Scatter(x=r["grid"], y=r["warm_curve"], name="warm (recipe)",
-                                 line=dict(color=TEAL, width=3.5)))
-        fig.add_hline(y=target_acc, line=dict(color=CORAL, dash="dash"),
-                      annotation_text=f"target {target_acc}")
-        fig.update_layout(xaxis_title="unique labeled examples seen",
-                          yaxis_title="validation accuracy", height=420,
-                          legend=dict(orientation="h", y=-0.2), margin=dict(t=20))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(_race_figure(r["grid"], r["cold_curve"], r["warm_curve"]),
+                        use_container_width=True, key="final_race")
+
+        # --- speed callout (these are real transformers-of-a-kind, trained live) ---
+        if r.get("elapsed"):
+            st.caption(f"⚡ Trained **{r['n_models']} models** and extracted the recipe in "
+                       f"**{r['elapsed']:.1f}s** on CPU — no GPU, no downloads.")
+
+        # --- make the recipe tangible: show what's actually in it ---
+        with st.expander("👀 Peek inside the recipe — the actual examples it teaches", expanded=True):
+            tr_texts, tr_y = task.slice(task.train_idx)
+            preview = [{"#": i + 1, "label": task.classes[int(tr_y[idx])], "example": tr_texts[idx]}
+                       for i, idx in enumerate(r["recipe"].ordering[:8]) if idx < len(tr_texts)]
+            st.table(preview)
+            st.caption(f"{len(r['recipe'].influence_set)} examples — "
+                       f"{len(r['recipe'].influence_set)/len(tr_texts)*100:.0f}% of the data — "
+                       "in easy→hard order. This is the whole 'recipe' that transfers.")
     else:
-        st.info("Pick source/target models in the sidebar and hit **Run transfer**.")
+        st.info("Pick source/target models in the sidebar and hit **▶ Run transfer**.")
 
 # ---------------------------------------------------------------- recipe inspector
 with tab_recipe:
