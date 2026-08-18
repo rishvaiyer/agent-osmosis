@@ -51,12 +51,15 @@ def _templated_sentiment(rng, hard: bool):
     """Positive vs negative feedback. Easy examples use strong, unambiguous words;
     `hard` examples are hedged and use mild same-polarity words — genuinely harder
     (they need more data to pin down) but still learnable, so the ceiling is high."""
+    # Randomly pick label: 1 for positive, 0 for negative
     label = int(rng.random() < 0.5)  # 1 = positive, 0 = negative
     subj = rng.choice(_SUBJECTS)
     if not hard:
+        # Easy case: use strong, unambiguous language (easy for a learner to classify)
         core = f"{subj} {rng.choice(_POS if label == 1 else _NEG)}"
         return core, label, 0.15
     # hard: hedged + mild wording, label-consistent (no surface flip)
+    # Harder case: use hedging words + milder sentiment to make it trickier
     mild = rng.choice(_MILD_POS if label == 1 else _MILD_NEG)
     core = f"{rng.choice(_HEDGE)} {subj} {mild}"
     return core, label, 0.7
@@ -66,17 +69,23 @@ def make_task(name: str = "support-sentiment", n: int = 600, seed: int = 0,
               hard_fraction: float = 0.35, val_fraction: float = 0.25) -> Task:
     """Build a templated text task. `hard_fraction` controls how many examples
     are near-boundary (the ones that carry the learning signal)."""
+    # Set up random number generator with seed for reproducibility
     rng = np.random.default_rng(seed)
     texts, labels, diff = [], [], []
+    # Generate n examples, mixing easy and hard difficulty levels
     for _ in range(n):
+        # Decide if this example should be hard or easy based on hard_fraction
         hard = rng.random() < hard_fraction
         t, y, d = _templated_sentiment(rng, hard)
         texts.append(t)
         labels.append(y)
+        # Add small noise to difficulty scores for realism
         diff.append(d + float(rng.normal(0, 0.03)))
     labels = np.array(labels, dtype=int)
+    # Clamp all difficulty scores to [0,1] range
     diff = np.clip(np.array(diff), 0, 1)
 
+    # Split data into training and validation sets randomly
     idx = rng.permutation(n)
     n_val = int(n * val_fraction)
     val_idx = np.sort(idx[:n_val])

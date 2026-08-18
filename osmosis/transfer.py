@@ -25,23 +25,32 @@ from .recipe import Recipe, FailureFix, EvalReceipt
 
 
 def _now() -> str:
+    """Get current UTC time as ISO format string."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def extract_recipe(task: Task, source_base: str = "osmo-base-a",
                    budget_frac: float = 0.15, hp: dict | None = None) -> Recipe:
-    """Train a source model, then distill *how* it learned into a Recipe."""
+    """Train a source model, then distill *how* it learned into a Recipe.
+
+    Steps:
+      1. Train a model on the full task
+      2. Find which examples were most influential (coverage-stratified coreset)
+      3. Order them easy->hard for better curriculum learning
+      4. Record failures the model couldn't fix and which examples could help
+    """
     hp = hp or {"lr": 0.15, "batch": 16, "prefit_passes": 3}
     tr_texts, tr_y = task.slice(task.train_idx)
     val_texts, val_y = task.slice(task.val_idx)
 
+    # Train the source model on the task
     source = OsmosisModel(base_model=source_base, lr=hp["lr"], seed=0)
     source.train_stream(tr_texts, tr_y, val_texts, val_y, batch=hp["batch"])
 
-    # 1) which examples mattered (indices are *positions into the train pool*)
+    # 1) Find which examples mattered (indices are *positions into the train pool*)
     k = max(4, int(len(tr_texts) * budget_frac))
     inf_local = top_influential(source, tr_texts, tr_y, k)
-    # 2) curriculum order
+    # 2) Arrange them in difficulty order: easy->hard
     ordering_local = order_easy_to_hard(source, tr_texts, tr_y, inf_local)
 
     # 3) failure -> fix log: val examples the source still gets wrong, and the
@@ -50,6 +59,7 @@ def extract_recipe(task: Task, source_base: str = "osmo-base-a",
     fails = np.where(preds != np.asarray(val_y))[0]
     fflog: list[FailureFix] = []
     for fi in fails[:6]:
+        # For each validation failure, find same-class examples from the recipe that could help
         true = int(val_y[fi])
         same_class = [int(i) for i in ordering_local if int(tr_y[i]) == true][:3]
         fflog.append(FailureFix(
@@ -57,7 +67,7 @@ def extract_recipe(task: Task, source_base: str = "osmo-base-a",
             fix_indices=same_class,
             note="source misclassified; reinforce with these same-class exemplars",
         ))
-    # the machinery's own first lesson:
+    # the machinery's own first lesson: warm-start needs a fix to not hurt generalization
     fflog.insert(0, FailureFix(
         failure_text="[meta] naive warm-start regressed val accuracy",
         true_label=-1, fix_indices=[],
