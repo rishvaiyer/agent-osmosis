@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from osmosis import (make_task, warm_vs_cold, compounding_chain, influence_invariance,
-                     BASE_MODELS)
+                     extract_recipe, cold_start, warm_start, BASE_MODELS)
 
 TEAL, CORAL, SLATE, FAINT = "#0E8F8A", "#D9612E", "#15242B", "#7A929C"
 FRESH_COLORS = {"fresh": TEAL, "aging": "#C6A15B", "stale": FAINT,
@@ -39,9 +39,29 @@ shrink = st.sidebar.checkbox("Apply shrink-perturb fix", value=False,
                              help="The failure->fix entry: softens a warm-started head so it stays plastic.")
 
 st.sidebar.divider()
-st.sidebar.markdown("**What am I looking at?** See the ELI5 in `docs/eli5.md`. "
-                    "The models here are tiny CPU classifiers standing in for LLMs — "
-                    "the *transfer machinery* is the point.")
+st.sidebar.markdown("**What am I looking at?** The models here are tiny CPU classifiers "
+                    "standing in for LLMs — the *transfer machinery* is the point.")
+
+REPO = "https://github.com/rishvaiyer/agent-osmosis/blob/main"
+st.sidebar.divider()
+st.sidebar.markdown("### 📚 Docs & links")
+st.sidebar.markdown(
+    f"""
+**Explainers**
+- [ELI5 — the idea](https://claude.ai/code/artifact/88db80da-0c34-4e5c-9b7b-1b93cc18f092)
+- [ELI5 — what we built](https://claude.ai/code/artifact/057928ae-588e-4571-b54d-50ae2cb31b59)
+- [Technical explainer](https://claude.ai/code/artifact/386c1bd6-8c96-430d-922c-4c90bc540f1c)
+
+**In the repo**
+- [Read me first (README)]({REPO}/README.md)
+- [Plain-English walkthrough]({REPO}/docs/eli5.md)
+- [Technical (implementation)]({REPO}/docs/technical.md)
+- [Write-up (the honest arc)]({REPO}/docs/writeup.md)
+- [Strategy & landscape]({REPO}/docs/strategy.md)
+- [Candid feedback]({REPO}/docs/feedback.md)
+- [Handoff (for another dev)]({REPO}/HANDOFF.md)
+- [⭐ GitHub repo](https://github.com/rishvaiyer/agent-osmosis)
+""")
 
 task = make_task(n=600, seed=int(task_seed))
 
@@ -50,8 +70,78 @@ if "approved" not in st.session_state:
     st.session_state.approved = {}
 
 st.title("Cross-model recipe transfer")
-tab_run, tab_recipe, tab_compound, tab_invar = st.tabs(
-    ["⚡ Warm vs Cold", "📋 Recipe inspector", "📈 Compounding", "🔬 Invariance"])
+tab_explain, tab_run, tab_recipe, tab_compound, tab_invar = st.tabs(
+    ["🎓 How the test works", "⚡ Warm vs Cold", "📋 Recipe inspector",
+     "📈 Compounding", "🔬 Invariance"])
+
+# ------------------------------------------------ how the test works (live, ELI5)
+with tab_explain:
+    st.subheader("Watch the actual test run — in plain English")
+    st.markdown(
+        "We give two small models the same **quiz**, let one study a **cheat sheet** "
+        "(the recipe) made from how an earlier model learned, and **count how many "
+        "example sentences each needs to pass**. Fewer = better. Here it is, live.")
+
+    tr_texts, tr_y = task.slice(task.train_idx)
+    easy = [(tr_texts[i], task.classes[int(tr_y[i])]) for i in task.train_idx[:200]
+            if len(tr_texts[i].split()) <= 4][:3]
+    hard = [(tr_texts[i], task.classes[int(tr_y[i])]) for i in task.train_idx[:200]
+            if len(tr_texts[i].split()) > 4][:3]
+    cE, cH = st.columns(2)
+    cE.caption("Easy examples (obvious)")
+    cE.table([{"sentence": t, "answer": l} for t, l in easy])
+    cH.caption("Hard examples (subtle)")
+    cH.table([{"sentence": t, "answer": l} for t, l in hard])
+
+    goal = min(target_acc, 0.85)   # quiz score to "pass" (kept reachable for the live demo)
+    if st.button("▶ Watch the test run", type="primary", key="run_explain"):
+        hp = {"lr": 0.15, "batch": 16, "prefit_passes": 3}
+
+        st.markdown("#### Step 1 — an earlier model studies everything, and we write down its cheat sheet")
+        with st.spinner("Model A studying, then extracting the recipe…"):
+            recipe = extract_recipe(task, source_base=source, budget_frac=budget, hp=hp)
+        st.success(f"Cheat sheet ready: **{len(recipe.influence_set)} sentences** "
+                   f"({len(recipe.influence_set)/len(tr_texts)*100:.0f}% of the pile), in easy→hard order.")
+
+        st.markdown(f"#### Step 2 — teach a *different* model two ways and count the sentences "
+                    f"it needs to reach **{goal:.0%}** on the quiz")
+
+        # run the two real learning curves (single seed, so we can narrate the counting)
+        cold_curve = cold_start(task, target_base=target, target_acc=goal, hp=hp, seed=0)
+        warm_curve, _ = warm_start(task, recipe, target_base=target, target_acc=goal, hp=hp, seed=0)
+
+        def _watch(curve, label, box):
+            """Tick through the real curve, showing the sentence count climb until it passes."""
+            passed_at = None
+            for seen, acc in zip(curve.seen, curve.val_acc):
+                if acc >= goal and passed_at is None:
+                    passed_at = seen
+                filled = max(0, min(20, int(acc * 20)))
+                bar = "🟩" * filled + "⬜" * (20 - filled)
+                status = f"✅ **passed at {passed_at} sentences**" if passed_at else "…still studying"
+                box.markdown(f"**{label}**\n\n# {seen} sentences\n\n"
+                             f"quiz score: **{acc:0.0%}**  \n{bar}\n\n{status}")
+                time.sleep(0.05)
+                if passed_at:
+                    break
+            return passed_at
+
+        colc, colw = st.columns(2)
+        cold_done = _watch(cold_curve, "❄️ Cold — no cheat sheet", colc.empty())
+        warm_done = _watch(warm_curve, "🔥 Warm — with the cheat sheet", colw.empty())
+
+        st.divider()
+        if cold_done and warm_done:
+            st.markdown(f"### The punchline")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Cold needed", f"{cold_done} sentences")
+            m2.metric("Warm needed", f"{warm_done} sentences", f"-{cold_done - warm_done}")
+            m3.metric("Speedup", f"{cold_done / warm_done:.1f}×")
+            st.caption("Same models, same quiz — the only difference is the cheat sheet. "
+                       "That's the whole experiment. The other tabs measure this same idea more rigorously.")
+        else:
+            st.info("With these settings one side didn't reach the goal in a single run — "
+                    "lower the target accuracy in the sidebar, or use the averaged **Warm vs Cold** tab.")
 
 # ---------------------------------------------------------------- warm vs cold
 def _race_figure(grid, cold, warm, upto=None):
