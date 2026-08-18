@@ -53,3 +53,14 @@ def test_freshness_states():
     task = make_task(n=300, seed=2)
     recipe = extract_recipe(task, budget_frac=0.15)
     assert recipe.freshness() == "unverified"  # no transfers recorded yet
+
+
+def test_real_transformer_warm_start():
+    import pytest
+    pytest.importorskip("torch")
+    from osmosis.torch_backend import real_warm_vs_cold
+    task = make_task(n=400, seed=0)
+    r = real_warm_vs_cold(task, trials=3, target_acc=0.85)
+    # the recipe should warm-start a real transformer with less data than cold
+    assert r["warm_mean"] is not None and r["cold_mean"] is not None
+    assert r["warm_mean"] < r["cold_mean"]

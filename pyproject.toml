@@ -12,6 +12,7 @@ dependencies = ["numpy>=1.26", "scikit-learn>=1.4"]
 
 [project.optional-dependencies]
 viz = ["matplotlib>=3.8", "plotly>=5.20", "streamlit>=1.40"]
+llm = ["torch>=2.2"]   # real-transformer backend (osmosis/torch_backend.py) — no model downloads
 
 [tool.setuptools.packages.find]
 include = ["osmosis*"]

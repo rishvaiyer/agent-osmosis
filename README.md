@@ -26,6 +26,14 @@ written so a real `transformers` + `peft` model drops in behind the same interfa
 The invariance result is the load-bearing one: it's the assumption the whole idea
 rests on, and on this substrate it holds.
 
+**Validated on real transformers too.** `osmosis/torch_backend.py` reruns the mechanics on
+actual multi-head-attention transformers (built from scratch in PyTorch — no downloads). There,
+warm-start transfers even more strongly (**2.9× less data**), but strict influence-invariance
+across *different architectures* turns out **weak** (~1.5× chance, stable across training length).
+The honest, sharper conclusion: what transfers is the recipe's **difficulty-coverage structure**,
+not the exact influence ranking — which is why a coverage recipe still warm-starts a different
+architecture well. See `docs/technical.md` §8.
+
 ## Quickstart
 
 ```bash
@@ -37,6 +45,9 @@ python examples/03_influence_invariance.py   # the load-bearing experiment
 
 streamlit run dashboard/app.py   # the control panel
 pytest -q                        # the claims, as tests
+
+pip install -e ".[llm]"                     # torch (CPU, no model downloads)
+python examples/04_real_transformer.py      # the same ideas on real transformers
 ```
 
 ## The dashboard

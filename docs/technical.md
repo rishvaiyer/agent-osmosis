@@ -173,6 +173,32 @@ runs unchanged behind that interface.
 
 ---
 
+## 8. Real-transformer validation (`torch_backend.py`)
+
+We didn't stop at the linear substrate. `osmosis/torch_backend.py` reruns the mechanics on
+**actual transformers** — multi-head self-attention, real backprop — built from scratch in
+PyTorch (model hubs are unreachable from the sandbox, so nothing is downloaded). Four
+`TORCH_BASES` are genuinely different architectures (depth/heads/width). Run it with
+`python examples/04_real_transformer.py`. Two findings, and the second is the important one:
+
+- **Warm-start transfers strongly.** A coverage-coreset + curriculum recipe warm-starts a
+  *different* transformer to target with **~2.9× less data** (102 vs 296 examples). The
+  transfer mechanism holds on real models.
+- **Strict influence-invariance is architecture-sensitive — and weak.** Cross-architecture
+  agreement on the top-EL2N examples is only **~1.5–1.8× chance** (mean Jaccard ≈ 0.13–0.17),
+  *stable across 5/12/25 training epochs* so it's a real effect, not noise — versus ~7× on the
+  linear substrate whose encoders were artificially similar.
+
+**The reconciliation, and the actual thesis update:** what transfers across architectures is the
+recipe's **difficulty-coverage structure**, not the exact influence ranking. The coverage coreset
+spans easy→hard by each model's own margins, so it warm-starts a new architecture well *even when*
+the two models' EL2N-top-k sets diverge. This directly refines the strategy doc's load-bearing
+question: don't bet on "the same examples are influential for every model" (weak); bet on "the
+*difficulty structure* of a task is shared, and a coverage recipe captures it" (holds here). That
+is a sharper, more defensible claim — and it came out of actually running the experiment.
+
+---
+
 ## References
 
 Ash & Adams, *On Warm-Starting Neural Network Training* (NeurIPS 2020) ·
