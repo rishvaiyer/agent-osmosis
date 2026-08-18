@@ -34,6 +34,13 @@ The honest, sharper conclusion: what transfers is the recipe's **difficulty-cove
 not the exact influence ranking — which is why a coverage recipe still warm-starts a different
 architecture well. See `docs/technical.md` §8.
 
+**Baselines (the honest control).** `python examples/05_baselines.py` pits the recipe against
+the obvious alternatives. The durable wins: warm-start beats **cold** (1.7×), **distillation**,
+and **EL2N-hardest-only** (which is reliably *bad*). What is *not* cleanly established on this toy
+substrate: that our coverage selection beats a *random* class-balanced subset — it's a noisy tie,
+which is exactly why the real-model study (`examples/06`) is the priority. We report this rather
+than hide it.
+
 ## Quickstart
 
 ```bash
@@ -48,7 +55,11 @@ pytest -q                        # the claims, as tests
 
 pip install -e ".[llm]"                     # torch (CPU, no model downloads)
 python examples/04_real_transformer.py      # the same ideas on real transformers
+
+make demo                                   # run all reproducible experiments at once
 ```
+
+New here or taking over? Read **`HANDOFF.md`**. Building the web UI? See **`docs/CURSOR_UI.md`**.
 
 ## The dashboard
 
